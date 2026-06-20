@@ -31,7 +31,7 @@ api.interceptors.response.use(
       // Clear token and user details if unauthorized
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      window.location.href = '/';
     }
     return Promise.reject(error);
   }
@@ -49,7 +49,7 @@ export const authAPI = {
   logout: () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    window.location.href = '/login';
+    window.location.href = '/';
   },
   getCurrentUser: () => {
     const user = localStorage.getItem('user');
