@@ -83,6 +83,46 @@ exports.cancelMeeting = async (req, res) => {
   }
 };
 
+// PUT /api/meetings/reschedule/:id (Reschedule meeting by parent)
+exports.parentRescheduleMeeting = async (req, res) => {
+  try {
+    const parent_id = req.user.id;
+    const meetingId = req.params.id;
+    const { meeting_date, meeting_time, notes } = req.body;
+
+    if (!meeting_date || !meeting_time) {
+      return res.status(400).json({ message: 'New meeting date and time slot are required to reschedule.' });
+    }
+
+    // Verify ownership
+    const [rows] = await db.query('SELECT id FROM meetings WHERE id = ? AND parent_id = ?', [meetingId, parent_id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Meeting not found or unauthorized.' });
+    }
+
+    // Create a JSON proposal to store in notes
+    const proposalJson = JSON.stringify({
+      proposed_date: meeting_date,
+      proposed_time: meeting_time,
+      parent_notes: notes || ''
+    });
+
+    // Update status to 'Rescheduled' and notes to the JSON proposal (original date/time remain untouched)
+    await db.query(
+      `UPDATE meetings 
+       SET status = 'Rescheduled', notes = ? 
+       WHERE id = ?`,
+      [proposalJson, meetingId]
+    );
+
+    return res.status(200).json({ message: 'Reschedule request submitted successfully.' });
+
+  } catch (error) {
+    console.error('Parent reschedule meeting error:', error);
+    return res.status(500).json({ message: 'Internal server error while rescheduling meeting.' });
+  }
+};
+
 
 // --- TEACHERS ---
 
@@ -116,13 +156,32 @@ exports.approveMeeting = async (req, res) => {
     const meetingId = req.params.id;
     const { notes } = req.body; // Optional notes
 
-    // Verify ownership
-    const [rows] = await db.query('SELECT id FROM meetings WHERE id = ? AND teacher_id = ?', [meetingId, teacher_id]);
+    // Verify ownership and get status/notes
+    const [rows] = await db.query('SELECT id, status, notes FROM meetings WHERE id = ? AND teacher_id = ?', [meetingId, teacher_id]);
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Meeting not found or unauthorized.' });
     }
 
-    // Update status and optional notes
+    const currentMeeting = rows[0];
+
+    // Check if it's a reschedule request from parent
+    if (currentMeeting.status === 'Rescheduled' && currentMeeting.notes) {
+      try {
+        const proposal = JSON.parse(currentMeeting.notes);
+        if (proposal.proposed_date && proposal.proposed_time) {
+          // Commit the proposed date and time, update status to Confirmed, and save note
+          await db.query(
+            "UPDATE meetings SET meeting_date = ?, meeting_time = ?, status = 'Confirmed', notes = ? WHERE id = ?",
+            [proposal.proposed_date, proposal.proposed_time, notes || proposal.parent_notes || 'Reschedule approved.', meetingId]
+          );
+          return res.status(200).json({ message: 'Reschedule request approved.' });
+        }
+      } catch (e) {
+        // Fallback to normal if parsing fails
+      }
+    }
+
+    // Normal approval
     if (notes !== undefined) {
       await db.query(
         "UPDATE meetings SET status = 'Confirmed', notes = ? WHERE id = ?",
@@ -150,13 +209,37 @@ exports.rejectMeeting = async (req, res) => {
     const meetingId = req.params.id;
     const { notes } = req.body; // Optional notes/reason
 
-    // Verify ownership
-    const [rows] = await db.query('SELECT id FROM meetings WHERE id = ? AND teacher_id = ?', [meetingId, teacher_id]);
+    // Verify ownership and get status/notes
+    const [rows] = await db.query('SELECT id, status, notes FROM meetings WHERE id = ? AND teacher_id = ?', [meetingId, teacher_id]);
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Meeting not found or unauthorized.' });
     }
 
-    // Update status and optional notes
+    const currentMeeting = rows[0];
+
+    // Check if it's a reschedule request from parent
+    if (currentMeeting.status === 'Rescheduled') {
+      // Reverting the reschedule proposal: keeps original date/time, resets status to Confirmed
+      let rejectionNote = 'Reschedule request declined. Original slot remains.';
+      if (notes) {
+        rejectionNote = notes;
+      } else {
+        try {
+          const proposal = JSON.parse(currentMeeting.notes);
+          if (proposal.parent_notes) {
+            rejectionNote = `Reschedule request declined: "${proposal.parent_notes}". Original slot remains.`;
+          }
+        } catch (e) {}
+      }
+
+      await db.query(
+        "UPDATE meetings SET status = 'Confirmed', notes = ? WHERE id = ?",
+        [rejectionNote, meetingId]
+      );
+      return res.status(200).json({ message: 'Reschedule request declined. Meeting remains confirmed at original time.' });
+    }
+
+    // Normal reject
     if (notes !== undefined) {
       await db.query(
         "UPDATE meetings SET status = 'Rejected', notes = ? WHERE id = ?",

@@ -7,5 +7,6 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 router.post('/', verifyToken, requireRole(['parent']), meetingController.createMeeting);
 router.get('/my', verifyToken, requireRole(['parent']), meetingController.getMyMeetings);
 router.delete('/:id', verifyToken, requireRole(['parent']), meetingController.cancelMeeting);
+router.put('/reschedule/:id', verifyToken, requireRole(['parent']), meetingController.parentRescheduleMeeting);
 
 module.exports = router;

@@ -1,5 +1,7 @@
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const dbConfig = {
@@ -99,7 +101,7 @@ async function executeMockQuery(sql, params = []) {
   }
 
   // 3. SELECT * FROM teachers WHERE id = ?
-  if (cleanSql.includes('SELECT * FROM teachers WHERE id = ?')) {
+  if (cleanSql.includes('FROM teachers WHERE id = ?')) {
     const id = parseInt(params[0], 10);
     const result = mockTeachers.filter(t => t.id === id);
     return [result];
@@ -243,19 +245,29 @@ async function executeMockQuery(sql, params = []) {
     return [result];
   }
 
-  // 12. Check meeting existence
-  if (cleanSql.includes('SELECT * FROM meetings WHERE id = ?') || cleanSql.includes('SELECT id FROM meetings WHERE id = ?')) {
+  // 12. Check meeting existence/retrieval by ID
+  if (cleanSql.includes('FROM meetings WHERE id = ?')) {
     const meetingId = parseInt(params[0], 10);
     const meeting = mockMeetings.find(m => m.id === meetingId);
     
-    // Check if it has specific teacher filters (Teacher operations check owner)
-    if (cleanSql.includes('AND teacher_id = ?')) {
-      const teacherId = parseInt(params[1], 10);
-      if (!meeting || meeting.teacher_id !== teacherId) {
-        return [[]];
+    if (meeting) {
+      // Check if it has specific teacher filters (Teacher operations check owner)
+      if (cleanSql.includes('AND teacher_id = ?')) {
+        const teacherId = parseInt(params[1], 10);
+        if (meeting.teacher_id !== teacherId) {
+          return [[]];
+        }
       }
+      // Check if it has specific parent filters
+      if (cleanSql.includes('AND parent_id = ?')) {
+        const parentId = parseInt(params[1], 10);
+        if (meeting.parent_id !== parentId) {
+          return [[]];
+        }
+      }
+      return [[meeting]];
     }
-    return [meeting ? [meeting] : []];
+    return [[]];
   }
 
   // 13. Updates (Teacher and Admin)
@@ -264,54 +276,29 @@ async function executeMockQuery(sql, params = []) {
     const meeting = mockMeetings.find(m => m.id === parseInt(meetingId, 10));
 
     if (meeting) {
-      // Parse parameters dynamically
-      // Pattern 1: UPDATE meetings SET status = 'Confirmed', notes = ? WHERE id = ?
-      // Pattern 2: UPDATE meetings SET status = 'Confirmed' WHERE id = ?
-      // Pattern 3: UPDATE meetings SET status = 'Rejected', notes = ? WHERE id = ?
-      // Pattern 4: UPDATE meetings SET status = 'Rejected' WHERE id = ?
-      // Pattern 5: UPDATE meetings SET meeting_date = ?, meeting_time = ?, status = 'Rescheduled', notes = ? WHERE id = ?
-      // Pattern 6: UPDATE meetings SET notes = ?, status = ? WHERE id = ?
-      // Pattern 7: Admin dynamic update
-      
-      if (cleanSql.includes("status = 'Confirmed'")) {
-        meeting.status = 'Confirmed';
-        if (cleanSql.includes("notes = ?")) {
-          meeting.notes = params[0];
-        }
-      } else if (cleanSql.includes("status = 'Rejected'")) {
-        meeting.status = 'Rejected';
-        if (cleanSql.includes("notes = ?")) {
-          meeting.notes = params[0];
-        }
-      } else if (cleanSql.includes("status = 'Rescheduled'")) {
-        meeting.meeting_date = params[0];
-        meeting.meeting_time = params[1];
-        meeting.status = 'Rescheduled';
-        meeting.notes = params[2];
-      } else if (cleanSql.includes("notes = ?") && cleanSql.includes("status = ?")) {
-        meeting.notes = params[0];
-        meeting.status = params[1];
-      } else if (cleanSql.includes("notes = ?") && !cleanSql.includes("status = ?")) {
-        meeting.notes = params[0];
-      } else {
-        // Admin update query builder: e.g. UPDATE meetings SET status = ?, notes = ? WHERE id = ?
-        // We can inspect which placeholders exist in SQL and align with params
-        let paramIdx = 0;
+      // Find the SET clause between SET and WHERE
+      const setIndex = cleanSql.indexOf('SET');
+      const whereIndex = cleanSql.lastIndexOf('WHERE');
+      if (setIndex !== -1 && whereIndex !== -1) {
+        const setClause = cleanSql.slice(setIndex + 3, whereIndex).trim();
+        // Split by commas
+        const updates = setClause.split(',').map(s => s.trim());
         
-        if (cleanSql.includes('status = ?')) {
-          meeting.status = params[paramIdx++];
-        }
-        if (cleanSql.includes('teacher_id = ?')) {
-          meeting.teacher_id = parseInt(params[paramIdx++], 10);
-        }
-        if (cleanSql.includes('meeting_date = ?')) {
-          meeting.meeting_date = params[paramIdx++];
-        }
-        if (cleanSql.includes('meeting_time = ?')) {
-          meeting.meeting_time = params[paramIdx++];
-        }
-        if (cleanSql.includes('notes = ?')) {
-          meeting.notes = params[paramIdx++];
+        let paramIdx = 0;
+        for (const update of updates) {
+          const parts = update.split('=').map(p => p.trim());
+          const column = parts[0];
+          const valueExpr = parts[1];
+          
+          if (valueExpr === '?') {
+            let val = params[paramIdx++];
+            if (column === 'teacher_id') val = parseInt(val, 10);
+            meeting[column] = val;
+          } else {
+            let val = valueExpr.replace(/^'|'$/g, '');
+            if (column === 'teacher_id') val = parseInt(val, 10);
+            meeting[column] = val;
+          }
         }
       }
       return [{ affectedRows: 1 }];
@@ -347,6 +334,124 @@ async function executeMockQuery(sql, params = []) {
   return [[]];
 }
 
+// Automatic Database Migration & Seeding
+async function runDatabaseMigration(conn) {
+  try {
+    const schemaPath = path.join(__dirname, '../db/schema.sql');
+    if (!fs.existsSync(schemaPath)) {
+      console.error('Migration schema file not found at:', schemaPath);
+      return;
+    }
+    const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+    
+    // Split statements by semicolon, filtering out comments
+    const statements = schemaSql
+      .split(/;(?=(?:[^']*'[^']*')*[^']*$)/) // split by semicolon not inside quotes
+      .map(stmt => stmt.trim())
+      .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
+
+    for (const statement of statements) {
+      if (statement.toLowerCase().startsWith('create database') || statement.toLowerCase().startsWith('use')) {
+        continue;
+      }
+      await conn.query(statement);
+    }
+    console.log('Database schema verified/created successfully.');
+
+    // Seed database users
+    const passwordHash = await bcrypt.hash('password123', 10);
+    const seedUsers = [
+      { name: 'System Admin', email: 'admin@intellitots.com', password: passwordHash, role: 'admin' },
+      { name: 'Ms. Shalini Sharma', email: 'shalini@intellitots.com', password: passwordHash, role: 'teacher' },
+      { name: 'Ms. Ananya Rao', email: 'ananya@intellitots.com', password: passwordHash, role: 'teacher' },
+      { name: 'Ramesh Kumar', email: 'ramesh@gmail.com', password: passwordHash, role: 'parent' },
+      { name: 'Priya Patel', email: 'priya@gmail.com', password: passwordHash, role: 'parent' }
+    ];
+
+    for (const user of seedUsers) {
+      await conn.query(
+        'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=name',
+        [user.name, user.email, user.password, user.role]
+      );
+      
+      if (user.role === 'teacher') {
+        const [rows] = await conn.query('SELECT id FROM users WHERE email = ?', [user.email]);
+        const teacherUserId = rows[0].id;
+        const specialization = user.email === 'shalini@intellitots.com' 
+          ? 'Pre-Nursery & Creative Arts' 
+          : 'Nursery & Early Literacy';
+
+        await conn.query(
+          'INSERT INTO teachers (id, teacher_name, email, specialization) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE teacher_name=teacher_name',
+          [teacherUserId, user.name, user.email, specialization]
+        );
+      }
+    }
+    
+    // Seed mock meetings if they do not exist
+    const [parents] = await conn.query("SELECT id FROM users WHERE role = 'parent' ORDER BY id");
+    const [teachers] = await conn.query("SELECT id FROM teachers ORDER BY id");
+
+    if (parents.length >= 2 && teachers.length >= 2) {
+      const parent1Id = parents[0].id;
+      const parent2Id = parents[1].id;
+      const teacher1Id = teachers[0].id;
+      const teacher2Id = teachers[1].id;
+
+      // Check if meetings table is empty
+      const [mtgCount] = await conn.query("SELECT COUNT(*) as count FROM meetings");
+      if (mtgCount[0].count === 0) {
+        const mockMeetings = [
+          {
+            parent_id: parent1Id,
+            teacher_id: teacher1Id,
+            student_name: 'Aarav Kumar',
+            class_name: 'Pre-Nursery A',
+            meeting_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            meeting_time: '10:00 AM - 10:30 AM',
+            reason: 'Discuss classroom behavior and progress in motor skills.',
+            status: 'Confirmed',
+            notes: 'Looking forward to meeting and discussing developmental goals.'
+          },
+          {
+            parent_id: parent2Id,
+            teacher_id: teacher2Id,
+            student_name: 'Riya Patel',
+            class_name: 'Nursery B',
+            meeting_date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            meeting_time: '11:30 AM - 12:00 PM',
+            reason: 'Discussion on language development progress.',
+            status: 'Pending',
+            notes: null
+          },
+          {
+            parent_id: parent1Id,
+            teacher_id: teacher2Id,
+            student_name: 'Aarav Kumar',
+            class_name: 'Pre-Nursery A',
+            meeting_date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            meeting_time: '09:00 AM - 09:30 AM',
+            reason: 'Initial onboarding chat.',
+            status: 'Completed',
+            notes: 'Aarav is adapting well. Parents are happy with the settling-in progress.'
+          }
+        ];
+
+        for (const mtg of mockMeetings) {
+          await conn.query(
+            `INSERT INTO meetings (parent_id, teacher_id, student_name, class_name, meeting_date, meeting_time, reason, status, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [mtg.parent_id, mtg.teacher_id, mtg.student_name, mtg.class_name, mtg.meeting_date, mtg.meeting_time, mtg.reason, mtg.status, mtg.notes]
+          );
+        }
+      }
+    }
+    console.log('Database auto-migration & seeding executed successfully.');
+  } catch (err) {
+    console.error('Error running automatic migrations:', err);
+  }
+}
+
 // Function to initialize connection
 async function initDatabase() {
   await seedMockData();
@@ -367,6 +472,14 @@ async function initDatabase() {
     
     // Validate connection pool works
     const conn = await pool.getConnection();
+    
+    // Check if users table exists
+    const [tables] = await conn.query(`SHOW TABLES LIKE 'users'`);
+    if (tables.length === 0) {
+      console.log('Tables do not exist in MySQL. Automatically running setup...');
+      await runDatabaseMigration(conn);
+    }
+    
     conn.release();
     
     console.log('Successfully connected to MySQL Database Server.');
@@ -392,6 +505,21 @@ module.exports = {
       return await pool.query(sql, params);
     } catch (err) {
       console.error('Database query error:', err);
+      // If the table doesn't exist, try to run migrations or fall back to mock
+      if (err.code === 'ER_NO_SUCH_TABLE') {
+        console.warn('Table not found. Running auto-migrations...');
+        try {
+          const conn = await pool.getConnection();
+          await runDatabaseMigration(conn);
+          conn.release();
+          // Retry the query once
+          return await pool.query(sql, params);
+        } catch (migrationErr) {
+          console.error('Auto-migration failed, falling back to mock database:', migrationErr);
+          useMock = true;
+          return executeMockQuery(sql, params);
+        }
+      }
       throw err;
     }
   }

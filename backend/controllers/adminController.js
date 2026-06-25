@@ -96,6 +96,43 @@ exports.updateMeeting = async (req, res) => {
 
     const currentMeeting = rows[0];
 
+    // Check if we are approving a parent's reschedule request
+    if (status === 'Confirmed' && currentMeeting.status === 'Rescheduled' && currentMeeting.notes) {
+      try {
+        const proposal = JSON.parse(currentMeeting.notes);
+        if (proposal.proposed_date && proposal.proposed_time) {
+          await db.query(
+            "UPDATE meetings SET meeting_date = ?, meeting_time = ?, status = 'Confirmed', notes = ? WHERE id = ?",
+            [proposal.proposed_date, proposal.proposed_time, notes || proposal.parent_notes || 'Reschedule approved by Admin.', meetingId]
+          );
+          return res.status(200).json({ message: 'Reschedule request approved by Admin.' });
+        }
+      } catch (e) {
+        // Fallback
+      }
+    }
+
+    // Check if we are rejecting a parent's reschedule request
+    if (status === 'Rejected' && currentMeeting.status === 'Rescheduled') {
+      let rejectionNote = 'Reschedule request declined by Admin. Original slot remains.';
+      if (notes) {
+        rejectionNote = notes;
+      } else {
+        try {
+          const proposal = JSON.parse(currentMeeting.notes);
+          if (proposal.parent_notes) {
+            rejectionNote = `Reschedule request declined by Admin: "${proposal.parent_notes}". Original slot remains.`;
+          }
+        } catch (e) {}
+      }
+
+      await db.query(
+        "UPDATE meetings SET status = 'Confirmed', notes = ? WHERE id = ?",
+        [rejectionNote, meetingId]
+      );
+      return res.status(200).json({ message: 'Reschedule request rejected. Meeting remains confirmed at original time.' });
+    }
+
     // Build update query dynamically
     const updateFields = [];
     const params = [];
