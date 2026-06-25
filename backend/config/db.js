@@ -494,9 +494,11 @@ async function initDatabase() {
 }
 
 // Initialize database check immediately
-initDatabase();
+const ready = initDatabase();
 
 module.exports = {
+  ready,
+  isUsingMock: () => useMock,
   query: async (sql, params) => {
     if (useMock || !pool) {
       return executeMockQuery(sql, params);

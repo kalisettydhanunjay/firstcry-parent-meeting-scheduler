@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const db = require('./config/db');
 require('dotenv').config();
 
 // Initialize app
@@ -33,7 +34,28 @@ app.use((err, req, res, next) => {
 });
 
 // Start Server
-app.listen(PORT, () => {
-  console.log(`Backend server is running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/api/health`);
-});
+const startServer = async () => {
+  try {
+    await db.ready;
+    if (db.isUsingMock()) {
+      console.log('\n================================================================');
+      console.log('🤖 MOCK DATABASE MODE ACTIVE');
+      console.log('Use the following test credentials to log in:');
+      console.log('1. Admin:   admin@intellitots.com   / password123');
+      console.log('2. Teacher: shalini@intellitots.com / password123');
+      console.log('3. Teacher: ananya@intellitots.com  / password123');
+      console.log('4. Parent:  ramesh@gmail.com        / password123');
+      console.log('5. Parent:  priya@gmail.com         / password123');
+      console.log('================================================================\n');
+    }
+    app.listen(PORT, () => {
+      console.log(`Backend server is running on port ${PORT}`);
+      console.log(`Health check: http://localhost:${PORT}/api/health`);
+    });
+  } catch (error) {
+    console.error('Failed to initialize database:', error);
+    process.exit(1);
+  }
+};
+
+startServer();

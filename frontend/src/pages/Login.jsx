@@ -40,6 +40,14 @@ const Login = () => {
       const response = await authAPI.login(identifier, password);
       const user = response.user;
       
+      // Enforce role separation matching the selected tab
+      if (user.role !== role) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setError(`Access denied. Incorrect credentials for ${role} login.`);
+        return;
+      }
+      
       // Navigate to correct dashboard based on role
       if (user.role === 'admin') {
         navigate('/admin');

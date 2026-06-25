@@ -1,0 +1,8 @@
+{
+  "name": "firstcry-intellitots-parent-meeting-scheduler",
+  "version": "1.0.0",
+  "description": "Unified runner for FirstCry Intellitots Meeting Scheduler",
+  "scripts": {
+    "dev": "npx concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\""
+  }
+}

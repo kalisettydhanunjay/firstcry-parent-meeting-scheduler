@@ -34,6 +34,8 @@ const AdminMeetings = () => {
   const [actionDate, setActionDate] = useState('');
   const [actionTime, setActionTime] = useState('');
   const [submittingAction, setSubmittingAction] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null); // { meetingId, newStatus }
+  const [actionError, setActionError] = useState('');
 
   // Time slots
   const timeSlots = [
@@ -73,18 +75,26 @@ const AdminMeetings = () => {
     fetchMeetings();
   }, [filterTeacher, filterStatus, filterDate, filterSearch]);
 
-  const handleQuickStatus = async (meetingId, newStatus) => {
-    if (!window.confirm(`Are you sure you want to mark this meeting as ${newStatus}?`)) return;
+  const handleQuickStatus = (meetingId, newStatus) => {
+    setActionError('');
+    setConfirmAction({ meetingId, newStatus });
+  };
+
+  const executeQuickStatus = async () => {
+    if (!confirmAction) return;
+    const { meetingId, newStatus } = confirmAction;
+    setConfirmAction(null);
     try {
       await adminAPI.updateMeeting(meetingId, { status: newStatus });
       await fetchMeetings();
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.message || 'Error updating status');
+      setActionError(err.response?.data?.message || 'Error updating status');
     }
   };
 
   const openActionModal = (meeting, type) => {
+    setActionError('');
     setActiveMtg(meeting);
     setActionType(type);
     setActionNotes(meeting.notes || '');
@@ -98,6 +108,7 @@ const AdminMeetings = () => {
   };
 
   const closeActionModal = () => {
+    setActionError('');
     setActiveMtg(null);
     setActionType('');
     setActionNotes('');
@@ -111,6 +122,7 @@ const AdminMeetings = () => {
     if (!activeMtg) return;
 
     setSubmittingAction(true);
+    setActionError('');
     try {
       const updateData = {};
       
@@ -129,7 +141,7 @@ const AdminMeetings = () => {
       await fetchMeetings();
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.message || 'Action failed');
+      setActionError(err.response?.data?.message || 'Action failed');
     } finally {
       setSubmittingAction(false);
     }
@@ -181,6 +193,13 @@ const AdminMeetings = () => {
         <div className="p-4 rounded-xl bg-red-50 border border-red-100 text-red-600 text-xs font-semibold flex items-center gap-2">
           <AlertCircle className="h-4.5 w-4.5 flex-shrink-0" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-100 text-red-600 text-xs font-semibold flex items-center gap-2">
+          <AlertCircle className="h-4.5 w-4.5 flex-shrink-0" />
+          <span>{actionError}</span>
         </div>
       )}
 
@@ -487,6 +506,49 @@ const AdminMeetings = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirmAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="absolute inset-0" onClick={() => setConfirmAction(null)} />
+          
+          <div className="relative bg-white w-full max-w-sm rounded-2xl shadow-xl border border-slate-100 overflow-hidden z-10 flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-100 bg-sky-50 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-800 text-base">
+                  Confirm Action
+                </h3>
+              </div>
+              <button onClick={() => setConfirmAction(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-slate-600">
+                Are you sure you want to mark this meeting as <strong className="text-slate-800">{confirmAction.newStatus}</strong>?
+              </p>
+
+              <div className="flex gap-3 pt-4 border-t border-slate-100 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setConfirmAction(null)}
+                  className="flex-1 py-2 rounded-xl text-xs font-bold border border-slate-200 hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={executeQuickStatus}
+                  className="flex-1 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-xs font-bold shadow-md shadow-sky-100 transition-colors"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
