@@ -8,6 +8,7 @@ import BookMeeting from './pages/BookMeeting';
 import TeacherDashboard from './pages/TeacherDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminMeetings from './pages/AdminMeetings';
+import TeacherMeetings from './pages/TeacherMeetings';
 
 function App() {
   return (
@@ -45,6 +46,16 @@ function App() {
             <ProtectedRoute allowedRoles={['teacher']}>
               <DashboardLayout>
                 <TeacherDashboard />
+              </DashboardLayout>
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/teacher/meetings" 
+          element={
+            <ProtectedRoute allowedRoles={['teacher']}>
+              <DashboardLayout>
+                <TeacherMeetings />
               </DashboardLayout>
             </ProtectedRoute>
           } 

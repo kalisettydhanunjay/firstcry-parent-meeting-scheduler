@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 import axios from 'axios';
 
@@ -27,7 +27,7 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401 && !error.config.url.includes('/auth/login')) {
+    if (error.response && (error.response.status === 401 || error.response.status === 403) && !error.config.url.includes('/auth/login')) {
       // Clear token and user details if unauthorized
       localStorage.removeItem('token');
       localStorage.removeItem('user');
@@ -71,6 +71,14 @@ export const parentAPI = {
   },
   cancelMeeting: async (id) => {
     const response = await api.delete(`/meetings/${id}`);
+    return response.data;
+  },
+  rescheduleMeeting: async (id, date, time, notes) => {
+    const response = await api.put(`/meetings/reschedule/${id}`, {
+      meeting_date: date,
+      meeting_time: time,
+      notes
+    });
     return response.data;
   },
   getTeachersList: async () => {

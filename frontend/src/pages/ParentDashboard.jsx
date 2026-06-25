@@ -13,7 +13,9 @@ import {
   HelpCircle,
   FileText,
   CalendarCheck,
-  RefreshCw
+  RefreshCw,
+  CalendarClock,
+  X
 } from 'lucide-react';
 
 const ParentDashboard = () => {
@@ -21,6 +23,24 @@ const ParentDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cancelLoadingId, setCancelLoadingId] = useState(null);
+
+  // Reschedule state
+  const [activeRescheduleMtg, setActiveRescheduleMtg] = useState(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('');
+  const [rescheduleNotes, setRescheduleNotes] = useState('');
+  const [submittingReschedule, setSubmittingReschedule] = useState(false);
+
+  const timeSlots = [
+    '09:00 AM - 09:30 AM',
+    '09:30 AM - 10:00 AM',
+    '10:00 AM - 10:30 AM',
+    '10:30 AM - 11:00 AM',
+    '11:30 AM - 12:00 PM',
+    '12:00 PM - 12:30 PM',
+    '02:30 PM - 03:00 PM',
+    '03:00 PM - 03:30 PM'
+  ];
 
   const fetchMeetings = async () => {
     setLoading(true);
@@ -54,6 +74,45 @@ const ParentDashboard = () => {
       alert(err.response?.data?.message || 'Failed to cancel the meeting.');
     } finally {
       setCancelLoadingId(null);
+    }
+  };
+
+  const openRescheduleModal = (meeting) => {
+    setActiveRescheduleMtg(meeting);
+    const formattedDate = meeting.meeting_date.includes('T') 
+      ? meeting.meeting_date.split('T')[0] 
+      : meeting.meeting_date;
+    setRescheduleDate(formattedDate);
+    setRescheduleTime(meeting.meeting_time);
+    setRescheduleNotes(meeting.notes || '');
+  };
+
+  const closeRescheduleModal = () => {
+    setActiveRescheduleMtg(null);
+    setRescheduleDate('');
+    setRescheduleTime('');
+    setRescheduleNotes('');
+  };
+
+  const handleRescheduleSubmit = async (e) => {
+    e.preventDefault();
+    if (!activeRescheduleMtg) return;
+
+    setSubmittingReschedule(true);
+    try {
+      await parentAPI.rescheduleMeeting(
+        activeRescheduleMtg.id,
+        rescheduleDate,
+        rescheduleTime,
+        rescheduleNotes
+      );
+      closeRescheduleModal();
+      await fetchMeetings();
+    } catch (err) {
+      console.error(err);
+      alert(err.response?.data?.message || 'Failed to reschedule meeting');
+    } finally {
+      setSubmittingReschedule(false);
     }
   };
 
@@ -193,6 +252,16 @@ const ParentDashboard = () => {
                         </div>
                       )}
                     </div>
+
+                    <div className="flex md:flex-col gap-2 w-full md:w-auto self-stretch md:self-start justify-center">
+                      <button
+                        onClick={() => openRescheduleModal(mtg)}
+                        className="flex items-center gap-1.5 text-xs font-bold text-sky-600 hover:text-sky-700 hover:bg-sky-50 border border-sky-100 hover:border-sky-200 px-3.5 py-2.5 rounded-xl transition-all cursor-pointer w-full justify-center whitespace-nowrap animate-fade-in"
+                      >
+                        <CalendarClock className="h-4 w-4" />
+                        Reschedule
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -214,59 +283,129 @@ const ParentDashboard = () => {
               </div>
             ) : (
               <div className="space-y-4">
-                {pendingMeetings.map((mtg) => (
-                  <div 
-                    key={mtg.id} 
-                    className="p-4 rounded-2xl bg-white border border-slate-200/80 hover:border-slate-300 transition-all flex flex-col md:flex-row justify-between items-start gap-4"
-                  >
-                    <div className="space-y-2 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {getStatusBadge(mtg.status)}
-                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">
-                          Student: {mtg.student_name} | {mtg.class_name}
-                        </span>
-                      </div>
-                      
-                      <p className="text-xs text-slate-600 font-semibold">
-                        Teacher: {mtg.teacher_name} ({mtg.specialization})
-                      </p>
+                {pendingMeetings.map((mtg) => {
+                  let isProposal = false;
+                  let proposalDate = '';
+                  let proposalTime = '';
+                  let parentNotes = '';
+                  
+                  if (mtg.status === 'Rescheduled' && mtg.notes) {
+                    try {
+                      const parsed = JSON.parse(mtg.notes);
+                      if (parsed.proposed_date && parsed.proposed_time) {
+                        isProposal = true;
+                        proposalDate = parsed.proposed_date;
+                        proposalTime = parsed.proposed_time;
+                        parentNotes = parsed.parent_notes;
+                      }
+                    } catch (e) {
+                      // Notes is not JSON (it's a plain text note from teacher/admin)
+                    }
+                  }
 
-                      <div className="flex flex-wrap gap-4 text-xs text-slate-600 bg-slate-50 p-2 rounded-xl">
-                        <span className="flex items-center gap-1.5">
-                          <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                          {formatDate(mtg.meeting_date)}
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                          <Clock className="h-3.5 w-3.5 text-slate-400" />
-                          {mtg.meeting_time}
-                        </span>
-                      </div>
-
-                      <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                        <strong className="text-slate-700 block font-semibold mb-0.5">Reason for Meeting:</strong>
-                        {mtg.reason}
-                      </div>
-
-                      {mtg.notes && (
-                        <div className="text-xs bg-sky-50/60 p-2.5 rounded-xl border border-sky-100 text-slate-600">
-                          <strong className="text-sky-600 font-bold block mb-1">Teacher's Note (Reschedule Info):</strong>
-                          {mtg.notes}
+                  return (
+                    <div 
+                      key={mtg.id} 
+                      className="p-4 rounded-2xl bg-white border border-slate-200/80 hover:border-slate-300 transition-all flex flex-col md:flex-row justify-between items-start gap-4"
+                    >
+                      <div className="space-y-2 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {getStatusBadge(mtg.status)}
+                          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">
+                            Student: {mtg.student_name} | {mtg.class_name}
+                          </span>
                         </div>
-                      )}
-                    </div>
+                        
+                        <p className="text-xs text-slate-600 font-semibold">
+                          Teacher: {mtg.teacher_name} ({mtg.specialization})
+                        </p>
 
-                    {mtg.status === 'Pending' && (
-                      <button
-                        onClick={() => handleCancelMeeting(mtg.id)}
-                        disabled={cancelLoadingId === mtg.id}
-                        className="flex items-center gap-1 text-xs font-bold text-red-500 hover:text-red-700 hover:bg-red-50 border border-red-100 hover:border-red-200 px-3 py-2 rounded-xl transition-all cursor-pointer w-full md:w-auto justify-center"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Cancel
-                      </button>
-                    )}
-                  </div>
-                ))}
+                        {isProposal ? (
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap gap-4 text-xs text-slate-500 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                              <div>
+                                <span className="font-semibold block text-[10px] uppercase text-slate-400">Original Confirmed Slot:</span>
+                                <span className="flex items-center gap-1.5 mt-0.5">
+                                  <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                                  {formatDate(mtg.meeting_date)}
+                                </span>
+                                <span className="flex items-center gap-1.5 mt-0.5">
+                                  <Clock className="h-3.5 w-3.5 text-slate-400" />
+                                  {mtg.meeting_time}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-4 text-xs text-sky-700 bg-sky-50 p-2 rounded-xl border border-sky-100">
+                              <div>
+                                <span className="font-bold block text-[10px] uppercase text-sky-500">Proposed Reschedule Slot (Pending Approval):</span>
+                                <span className="flex items-center gap-1.5 mt-0.5">
+                                  <Calendar className="h-3.5 w-3.5 text-sky-500" />
+                                  {formatDate(proposalDate)}
+                                </span>
+                                <span className="flex items-center gap-1.5 mt-0.5">
+                                  <Clock className="h-3.5 w-3.5 text-sky-500" />
+                                  {proposalTime}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-4 text-xs text-slate-600 bg-slate-50 p-2 rounded-xl">
+                            <span className="flex items-center gap-1.5">
+                              <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                              {formatDate(mtg.meeting_date)}
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              <Clock className="h-3.5 w-3.5 text-slate-400" />
+                              {mtg.meeting_time}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                          <strong className="text-slate-700 block font-semibold mb-0.5">Reason for Meeting:</strong>
+                          {mtg.reason}
+                        </div>
+
+                        {isProposal ? (
+                          parentNotes && (
+                            <div className="text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-slate-600">
+                              <strong className="text-slate-600 font-bold block mb-1">Your Reschedule Note:</strong>
+                              "{parentNotes}"
+                            </div>
+                          )
+                        ) : (
+                          mtg.notes && (
+                            <div className="text-xs bg-sky-50/60 p-2.5 rounded-xl border border-sky-100 text-slate-600">
+                              <strong className="text-sky-600 font-bold block mb-1">Teacher's Note (Reschedule Info):</strong>
+                              {mtg.notes}
+                            </div>
+                          )
+                        )}
+                      </div>
+
+                      <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto self-stretch md:self-start">
+                        <button
+                          onClick={() => openRescheduleModal(mtg)}
+                          className="flex-1 flex items-center gap-1.5 text-xs font-bold text-sky-600 hover:text-sky-700 hover:bg-sky-50 border border-sky-100 hover:border-sky-200 px-3 py-2.5 rounded-xl transition-all cursor-pointer justify-center whitespace-nowrap"
+                        >
+                          <CalendarClock className="h-4 w-4" />
+                          Reschedule
+                        </button>
+                        {mtg.status === 'Pending' && (
+                          <button
+                            onClick={() => handleCancelMeeting(mtg.id)}
+                            disabled={cancelLoadingId === mtg.id}
+                            className="flex-1 flex items-center gap-1.5 text-xs font-bold text-red-500 hover:text-red-700 hover:bg-red-50 border border-red-100 hover:border-red-200 px-3 py-2.5 rounded-xl transition-all cursor-pointer justify-center whitespace-nowrap"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -315,6 +454,96 @@ const ParentDashboard = () => {
         </div>
 
       </div>
+
+      {/* Reschedule Overlay Modal */}
+      {activeRescheduleMtg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div 
+            className="absolute inset-0" 
+            onClick={closeRescheduleModal}
+          />
+          <div className="relative bg-white w-full max-w-lg rounded-2xl shadow-xl border border-slate-100 overflow-hidden z-10 flex flex-col max-h-[90vh]">
+            
+            {/* Modal Title */}
+            <div className="px-6 py-4 border-b border-slate-100 bg-sky-50 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-800 text-base">
+                  Reschedule Meeting Request
+                </h3>
+                <span className="text-[10px] text-slate-500 font-medium">
+                  Student: {activeRescheduleMtg.student_name} ({activeRescheduleMtg.class_name})
+                </span>
+              </div>
+              <button onClick={closeRescheduleModal} className="p-1 rounded-lg hover:bg-white text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleRescheduleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-600">New Date</label>
+                  <input
+                    type="date"
+                    value={rescheduleDate}
+                    min={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setRescheduleDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-600">New Time Slot</label>
+                  <select
+                    value={rescheduleTime}
+                    onChange={(e) => setRescheduleTime(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none bg-white"
+                    required
+                  >
+                    <option value="">-- Select Slot --</option>
+                    {timeSlots.map(slot => (
+                      <option key={slot} value={slot}>{slot}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-600">Rescheduling Note for Teacher</label>
+                <textarea
+                  rows="3"
+                  value={rescheduleNotes}
+                  onChange={(e) => setRescheduleNotes(e.target.value)}
+                  placeholder="e.g. Apologies, I have a conflict. Can we meet at this rescheduled slot instead?"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none placeholder-slate-400"
+                  required
+                />
+              </div>
+
+              {/* Submit Buttons */}
+              <div className="flex gap-3 border-t border-slate-100 pt-4 mt-6">
+                <button
+                  type="button"
+                  onClick={closeRescheduleModal}
+                  className="flex-1 py-2.5 border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingReschedule}
+                  className="flex-1 py-2.5 text-white bg-sky-500 hover:bg-sky-600 shadow-md shadow-sky-100 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                >
+                  {submittingReschedule ? 'Saving...' : 'Confirm Reschedule'}
+                </button>
+              </div>
+
+            </form>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 };

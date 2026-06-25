@@ -78,7 +78,7 @@ const TeacherDashboard = () => {
     setActionNotes(meeting.notes || '');
     
     if (type === 'reschedule') {
-      setRescheduleDate(meeting.meeting_date);
+      setRescheduleDate(meeting.meeting_date ? (meeting.meeting_date.includes('T') ? meeting.meeting_date.split('T')[0] : meeting.meeting_date) : '');
       setRescheduleTime(meeting.meeting_time);
     }
   };
@@ -129,20 +129,25 @@ const TeacherDashboard = () => {
   // Grouping logic
   const todayStr = new Date().toISOString().split('T')[0];
   
+  const normalizeDate = (dStr) => {
+    if (!dStr) return '';
+    return dStr.includes('T') ? dStr.split('T')[0] : dStr;
+  };
+  
   const todayMeetings = meetings.filter(m => 
-    m.meeting_date === todayStr && 
-    (m.status === 'Confirmed' || m.status === 'Rescheduled')
+    normalizeDate(m.meeting_date) === todayStr && 
+    m.status === 'Confirmed'
   );
 
-  const pendingMeetings = meetings.filter(m => m.status === 'Pending');
+  const pendingMeetings = meetings.filter(m => m.status === 'Pending' || m.status === 'Rescheduled');
 
   const upcomingMeetings = meetings.filter(m => 
-    m.meeting_date > todayStr && 
-    (m.status === 'Confirmed' || m.status === 'Rescheduled')
+    normalizeDate(m.meeting_date) > todayStr && 
+    m.status === 'Confirmed'
   );
 
   const completedOrRejectedMeetings = meetings.filter(m => 
-    m.status === 'Completed' || m.status === 'Rejected' || (m.meeting_date < todayStr && m.status !== 'Pending')
+    m.status === 'Completed' || m.status === 'Rejected' || (normalizeDate(m.meeting_date) < todayStr && m.status !== 'Pending' && m.status !== 'Rescheduled')
   );
 
   const getStatusBadge = (status) => {
@@ -260,46 +265,102 @@ const TeacherDashboard = () => {
           {loading ? (
             <div className="py-8 text-center text-slate-400 text-xs font-medium">Loading...</div>
           ) : pendingMeetings.length === 0 ? (
-            <p className="py-8 text-slate-400 text-xs text-center">No pending meeting requests.</p>
+            <p className="py-8 text-slate-400 text-xs text-center">No pending requests.</p>
           ) : (
             <div className="space-y-4">
-              {pendingMeetings.map(m => (
-                <div key={m.id} className="p-4 rounded-xl bg-white border border-slate-200 hover:border-slate-300 transition-all space-y-3">
-                  <div>
-                    <h3 className="font-bold text-slate-800 text-sm">{m.student_name}</h3>
-                    <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Class: {m.class_name}</p>
-                  </div>
-                  <div className="text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                    <div className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5 text-slate-400" /> {formatDate(m.meeting_date)}</div>
-                    <div className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" /> {m.meeting_time}</div>
-                    <div className="flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-slate-400" /> {m.parent_name} ({m.parent_email})</div>
-                  </div>
-                  <div className="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100 italic">
-                    "{m.reason}"
-                  </div>
+              {pendingMeetings.map(m => {
+                let isProposal = false;
+                let proposalDate = '';
+                let proposalTime = '';
+                let parentNotes = '';
+                
+                if (m.status === 'Rescheduled' && m.notes) {
+                  try {
+                    const parsed = JSON.parse(m.notes);
+                    if (parsed.proposed_date && parsed.proposed_time) {
+                      isProposal = true;
+                      proposalDate = parsed.proposed_date;
+                      proposalTime = parsed.proposed_time;
+                      parentNotes = parsed.parent_notes;
+                    }
+                  } catch (e) {
+                    // Notes is plain text (original note or teacher/admin reschedule info)
+                  }
+                }
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => handleApprove(m.id)}
-                      className="flex items-center justify-center gap-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold shadow-sm transition-all"
-                    >
-                      <Check className="h-3.5 w-3.5" /> Approve
-                    </button>
-                    <button
-                      onClick={() => openActionModal(m, 'reject')}
-                      className="flex items-center justify-center gap-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-xs font-bold border border-rose-100 transition-all"
-                    >
-                      <X className="h-3.5 w-3.5" /> Reject
-                    </button>
-                    <button
-                      onClick={() => openActionModal(m, 'reschedule')}
-                      className="col-span-2 flex items-center justify-center gap-1 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-bold transition-all"
-                    >
-                      <CalendarClock className="h-3.5 w-3.5" /> Reschedule Request
-                    </button>
+                return (
+                  <div key={m.id} className="p-4 rounded-xl bg-white border border-slate-200 hover:border-slate-300 transition-all space-y-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="font-bold text-slate-800 text-sm">{m.student_name}</h3>
+                        <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Class: {m.class_name}</p>
+                      </div>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        m.status === 'Rescheduled' 
+                          ? 'bg-sky-50 text-sky-700 border-sky-100' 
+                          : 'bg-amber-50 text-amber-700 border-amber-100'
+                      }`}>
+                        {m.status === 'Rescheduled' ? 'Reschedule Requested' : 'Pending Request'}
+                      </span>
+                    </div>
+
+                    {isProposal ? (
+                      <div className="space-y-2">
+                        <div className="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                          <span className="font-bold block text-[10px] uppercase text-slate-400">Original Confirmed Slot:</span>
+                          <div className="flex items-center gap-1.5 mt-0.5"><Calendar className="h-3.5 w-3.5" /> {formatDate(m.meeting_date)}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5"><Clock className="h-3.5 w-3.5" /> {m.meeting_time}</div>
+                        </div>
+                        <div className="text-xs text-sky-700 bg-sky-50 p-2.5 rounded-lg border border-sky-100 font-medium">
+                          <span className="font-bold block text-[10px] uppercase text-sky-500">Proposed New Slot:</span>
+                          <div className="flex items-center gap-1.5 mt-0.5"><Calendar className="h-3.5 w-3.5 text-sky-500" /> {formatDate(proposalDate)}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5"><Clock className="h-3.5 w-3.5 text-sky-500" /> {proposalTime}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                        <div className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5 text-slate-400" /> {formatDate(m.meeting_date)}</div>
+                        <div className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" /> {m.meeting_time}</div>
+                      </div>
+                    )}
+
+                    <div className="text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                      <div className="flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-slate-400" /> {m.parent_name} ({m.parent_email})</div>
+                    </div>
+
+                    <div className="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100 italic">
+                      <strong>Reason:</strong> "{m.reason}"
+                    </div>
+
+                    {isProposal && parentNotes && (
+                      <div className="text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-slate-600">
+                        <strong>Parent's Reschedule Note:</strong> "{parentNotes}"
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => handleApprove(m.id)}
+                        className="flex items-center justify-center gap-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold shadow-sm transition-all cursor-pointer"
+                      >
+                        <Check className="h-3.5 w-3.5" /> Approve
+                      </button>
+                      <button
+                        onClick={() => openActionModal(m, 'reject')}
+                        className="flex items-center justify-center gap-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-xs font-bold border border-rose-100 transition-all cursor-pointer"
+                      >
+                        <X className="h-3.5 w-3.5" /> Reject
+                      </button>
+                      <button
+                        onClick={() => openActionModal(m, 'reschedule')}
+                        className="col-span-2 flex items-center justify-center gap-1 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                      >
+                        <CalendarClock className="h-3.5 w-3.5" /> Counter Propose Reschedule
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

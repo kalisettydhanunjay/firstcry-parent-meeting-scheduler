@@ -33,7 +33,8 @@ const DashboardLayout = ({ children }) => {
         ];
       case 'teacher':
         return [
-          { name: 'My Dashboard', path: '/teacher', icon: Home }
+          { name: 'My Dashboard', path: '/teacher', icon: Home },
+          { name: 'Manage Meetings', path: '/teacher/meetings', icon: Calendar }
         ];
       case 'admin':
         return [
